@@ -22,15 +22,19 @@ async def get_quote(ticker: str) -> dict:
         )
         r.raise_for_status()
         data = r.json()
+        current = data.get("c", 0) or data.get("pc", 0)  # fall back to prev_close when market closed
+        prev_close = data.get("pc", 0)
+        change = current - prev_close if prev_close else 0
+        change_pct = (change / prev_close * 100) if prev_close else 0
         return {
             "ticker": ticker,
-            "current": data.get("c", 0),
-            "open": data.get("o", 0),
-            "high": data.get("h", 0),
-            "low": data.get("l", 0),
-            "prev_close": data.get("pc", 0),
-            "change": data.get("d", 0),
-            "change_pct": data.get("dp", 0),
+            "current": current,
+            "open": data.get("o", 0) or current,
+            "high": data.get("h", 0) or current,
+            "low": data.get("l", 0) or current,
+            "prev_close": prev_close,
+            "change": round(change, 4),
+            "change_pct": round(change_pct, 4),
         }
 
 

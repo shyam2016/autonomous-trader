@@ -1,8 +1,11 @@
 import json
+import logging
 import os
 from datetime import datetime, timezone
 import anthropic
 from backend.services import portfolio as portfolio_svc
+
+logger = logging.getLogger(__name__)
 
 MODEL = "claude-sonnet-4-6"
 
@@ -63,29 +66,32 @@ TOOLS = [
     },
 ]
 
-SYSTEM_PROMPT = """You are an autonomous paper trading agent for a $100,000 virtual portfolio.
+SYSTEM_PROMPT = """You are an autonomous paper trading agent for a $100,000 virtual portfolio. This is paper trading — no real money is at risk, so be willing to act on good signals.
 
 Risk rules you MUST follow:
 - Maximum 10% of total portfolio value in any single stock
 - Never sell more shares than you currently hold
 - Stop-loss: if a position is down more than 8%, sell it
-- Only buy when confidence from research is >= 0.6 and recommendation is BULLISH
-- Only sell (beyond stop-loss) when recommendation is BEARISH and you hold the stock
-- Otherwise HOLD
+
+Trading rules:
+- BUY when: recommendation is BULLISH and confidence >= 0.5, OR recommendation is NEUTRAL and confidence >= 0.75 and sentiment_score > 0.1
+- SELL when: recommendation is BEARISH and you hold shares, OR stop-loss triggered
+- HOLD when: signals are weak or mixed
+
+Important: The price in the research report may be after-hours (prev_close). Use that price for all calculations — it is still valid for paper trading.
 
 Your workflow:
 1. Check the current portfolio and position for this ticker
-2. Check max buy quantity if considering a purchase
-3. Make a trading decision based on the research report provided
-4. Execute the trade (buy or sell) if warranted, or do nothing (hold)
-5. Return a JSON decision summary
+2. If considering a buy, call get_max_buy_quantity to find how many shares you can buy
+3. Execute the trade by calling buy_stock or sell_stock — DO NOT skip this step if action is BUY or SELL
+4. After executing (or deciding to hold), return the JSON summary
 
 Return ONLY this JSON at the end (no markdown, no extra text):
 {
   "ticker": "SYMBOL",
   "action": "BUY" | "SELL" | "HOLD",
-  "quantity": <float or 0 if HOLD>,
-  "rationale": "<concise explanation of decision>"
+  "quantity": <float, 0 if HOLD>,
+  "rationale": "<concise explanation>"
 }"""
 
 
@@ -167,9 +173,13 @@ Based on this research, make a trading decision for {ticker}."""
                     try:
                         decision = json.loads(text)
                         decision["timestamp"] = datetime.now(timezone.utc).isoformat()
+                        logger.info(
+                            f"[Trader] {ticker}: {decision.get('action')} "
+                            f"qty={decision.get('quantity')} | {decision.get('rationale', '')[:80]}"
+                        )
                         return decision
                     except json.JSONDecodeError:
-                        pass
+                        logger.warning(f"[Trader] {ticker}: could not parse JSON from response: {text[:200]}")
             return {
                 "ticker": ticker,
                 "action": "HOLD",

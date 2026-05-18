@@ -1,8 +1,11 @@
 import json
+import logging
 import os
 from datetime import datetime, timezone
 import anthropic
 from backend.services import finnhub
+
+logger = logging.getLogger(__name__)
 
 MODEL = "claude-sonnet-4-6"
 
@@ -127,6 +130,12 @@ async def run(ticker: str) -> dict:
                     try:
                         report = json.loads(text)
                         report["timestamp"] = datetime.now(timezone.utc).isoformat()
+                        logger.info(
+                            f"[Researcher] {ticker}: {report.get('recommendation')} "
+                            f"| price=${report.get('current_price')} "
+                            f"| sentiment={report.get('sentiment_score')} "
+                            f"| confidence={report.get('confidence')}"
+                        )
                         return report
                     except json.JSONDecodeError:
                         pass
