@@ -54,8 +54,20 @@ export default function Watchlist({ onWatchlistChange }) {
   }
 
   const runAgents = async () => {
+    if (selected.length === 0) return
     setRunning(true)
-    await fetch('/api/agent/run', { method: 'POST' })
+    // Always persist the current selection before triggering agents
+    await fetch('/api/watchlist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tickers: selected }),
+    })
+    onWatchlistChange(selected)
+    const res = await fetch('/api/agent/run', { method: 'POST' })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      console.error('Agent run failed:', err)
+    }
     setRunning(false)
   }
 
