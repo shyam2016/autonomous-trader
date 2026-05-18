@@ -1,11 +1,36 @@
 import json
 import logging
+import re
 import os
 from datetime import datetime, timezone
 import anthropic
 from backend.services import finnhub
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_json(text: str) -> dict | None:
+    """Extract JSON from Claude's response regardless of formatting."""
+    text = text.strip()
+    # Try code fence first: ```json ... ``` or ``` ... ```
+    fence = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
+    if fence:
+        try:
+            return json.loads(fence.group(1).strip())
+        except json.JSONDecodeError:
+            pass
+    # Try outermost { ... } block
+    brace = re.search(r"\{[\s\S]*\}", text)
+    if brace:
+        try:
+            return json.loads(brace.group(0))
+        except json.JSONDecodeError:
+            pass
+    # Last resort: parse the whole string
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return None
 
 MODEL = "claude-sonnet-4-6"
 
@@ -121,14 +146,8 @@ async def run(ticker: str) -> dict:
         elif response.stop_reason == "end_turn":
             for block in response.content:
                 if hasattr(block, "text"):
-                    text = block.text.strip()
-                    # Strip markdown code fences if present
-                    if text.startswith("```"):
-                        text = text.split("```")[1]
-                        if text.startswith("json"):
-                            text = text[4:]
-                    try:
-                        report = json.loads(text)
+                    report = _extract_json(block.text)
+                    if report:
                         report["timestamp"] = datetime.now(timezone.utc).isoformat()
                         logger.info(
                             f"[Researcher] {ticker}: {report.get('recommendation')} "
@@ -137,8 +156,8 @@ async def run(ticker: str) -> dict:
                             f"| confidence={report.get('confidence')}"
                         )
                         return report
-                    except json.JSONDecodeError:
-                        pass
+                    else:
+                        logger.warning(f"[Researcher] {ticker}: could not extract JSON from:\n{block.text[:300]}")
             # Fallback if JSON parsing fails
             return {
                 "ticker": ticker,

@@ -1,11 +1,33 @@
 import json
 import logging
+import re
 import os
 from datetime import datetime, timezone
 import anthropic
 from backend.services import portfolio as portfolio_svc
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_json(text: str) -> dict | None:
+    """Extract JSON from Claude's response regardless of formatting."""
+    text = text.strip()
+    fence = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
+    if fence:
+        try:
+            return json.loads(fence.group(1).strip())
+        except json.JSONDecodeError:
+            pass
+    brace = re.search(r"\{[\s\S]*\}", text)
+    if brace:
+        try:
+            return json.loads(brace.group(0))
+        except json.JSONDecodeError:
+            pass
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return None
 
 MODEL = "claude-sonnet-4-6"
 
@@ -165,21 +187,16 @@ Based on this research, make a trading decision for {ticker}."""
         elif response.stop_reason == "end_turn":
             for block in response.content:
                 if hasattr(block, "text"):
-                    text = block.text.strip()
-                    if text.startswith("```"):
-                        text = text.split("```")[1]
-                        if text.startswith("json"):
-                            text = text[4:]
-                    try:
-                        decision = json.loads(text)
+                    decision = _extract_json(block.text)
+                    if decision:
                         decision["timestamp"] = datetime.now(timezone.utc).isoformat()
                         logger.info(
                             f"[Trader] {ticker}: {decision.get('action')} "
                             f"qty={decision.get('quantity')} | {decision.get('rationale', '')[:80]}"
                         )
                         return decision
-                    except json.JSONDecodeError:
-                        logger.warning(f"[Trader] {ticker}: could not parse JSON from response: {text[:200]}")
+                    else:
+                        logger.warning(f"[Trader] {ticker}: could not extract JSON from:\n{block.text[:300]}")
             return {
                 "ticker": ticker,
                 "action": "HOLD",
